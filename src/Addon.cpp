@@ -64,6 +64,8 @@ namespace Config
 
 	bool       RedirectRMB        = false;
 	EGameBinds RedirectRMB_Target = (EGameBinds)0;
+
+	bool       ActionCamHoldEnabled = false;
 }
 
 namespace Addon
@@ -75,6 +77,25 @@ namespace Addon
 	static Mumble::Data*        s_MumbleLink   = nullptr;
 
 	static HWND                 s_WindowHandle = nullptr;
+
+	// Track if the ActionCamHold key is currently held
+	static bool s_ActionCamHoldActive = false;
+	static const char* ACTIONCAM_HOLD_BIND_ID = "ActionCamHold";
+
+	static void ActionCamHold_KeybindHandler(const char* aIdentifier, bool aIsRelease)
+	{
+		if (!Config::ActionCamHoldEnabled || strcmp(aIdentifier, ACTIONCAM_HOLD_BIND_ID) != 0)
+			return;
+		if (!aIsRelease) {
+			s_ActionCamHoldActive = true;
+			if (Inputs::IsCursorHidden())
+				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+		} else {
+			s_ActionCamHoldActive = false;
+			if (!Inputs::IsCursorHidden())
+				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
+		}
+	}
 
 	void Load(AddonAPI* aApi)
 	{
@@ -90,6 +111,14 @@ namespace Addon
 
 		s_APIDefs->WndProc.Register(WndProc);
 
+		// Register Action Camera Hold keybind
+		s_APIDefs->InputBinds.Deregister(ACTIONCAM_HOLD_BIND_ID);
+		s_APIDefs->InputBinds.RegisterWithString(
+			ACTIONCAM_HOLD_BIND_ID,
+			(KEYBINDS_PROCESS)ActionCamHold_KeybindHandler,
+			""
+		);
+
 		IDXGISwapChain* swapchain = (IDXGISwapChain*)s_APIDefs->SwapChain;
 		DXGI_SWAP_CHAIN_DESC desc{};
 		swapchain->GetDesc(&desc);
@@ -100,8 +129,8 @@ namespace Addon
 
 	void Unload()
 	{
+		s_APIDefs->InputBinds.Deregister(ACTIONCAM_HOLD_BIND_ID);
 		s_APIDefs->WndProc.Deregister(WndProc);
-
 		s_APIDefs->Renderer.Deregister(PreRender);
 		s_APIDefs->Renderer.Deregister(RenderOptions);
 	}
@@ -161,55 +190,58 @@ namespace Addon
 
 	void PreRender()
 	{
-		static bool s_CursorWasHidden = false;
-		static bool s_WasActive = false;
+		   static bool s_CursorWasHidden = false;
+		   static bool s_WasActive = false;
 
-		/* Do not evaluate state changes while not in gameplay. */
-		if (!s_NexusLink->IsGameplay)
+		   // Action Camera Hold: block logic that would turn action cam back on
+		   bool blockActionCamEnable = (Config::ActionCamHoldEnabled && s_ActionCamHoldActive);
+
+		   /* Do not evaluate state changes while not in gameplay. */
+		   if (!s_NexusLink->IsGameplay)
+		   {
+			   return;
+		   }
+
+		   /* Do not evaluate state changes while map is open. */
+		   if (s_MumbleLink->Context.IsMapOpen)
+		   {
+			   return;
+		   }
+
+		bool shouldActivate = false;
+
+		if (Config::ResetToCenter && s_CursorWasHidden && !Inputs::IsCursorHidden() && s_NexusLink->IsCameraMoving)
 		{
-			return;
+			RECT rect{};
+			GetWindowRect(s_WindowHandle, &rect);
+			SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
 		}
 
-		/* Do not evaluate state changes while map is open. */
-		if (s_MumbleLink->Context.IsMapOpen)
+		s_CursorWasHidden = Inputs::IsCursorHidden();
+
+		if (Config::EnableWhileMoving && s_NexusLink->IsMoving)
 		{
-			return;
+			shouldActivate = true;
+		}
+		if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
+		{
+			shouldActivate = true;
+		}
+		if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
+		{
+			shouldActivate = true;
 		}
 
-		   bool shouldActivate = false;
+		//                      ui is ticking           && cursor not visible
+		bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
 
-		   if (Config::ResetToCenter && s_CursorWasHidden && !Inputs::IsCursorHidden() && s_NexusLink->IsCameraMoving)
-		   {
-			   RECT rect{};
-			   GetWindowRect(s_WindowHandle, &rect);
-			   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
-		   }
-
-		   s_CursorWasHidden = Inputs::IsCursorHidden();
-
-		   if (Config::EnableWhileMoving && s_NexusLink->IsMoving)
-		   {
-			   shouldActivate = true;
-		   }
-		   if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
-		   {
-			   shouldActivate = true;
-		   }
-		   if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
-		   {
-			   shouldActivate = true;
-		   }
-
-		   //                      ui is ticking           && cursor not visible
-		   bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
-
-		   // Only enable action camera if it should be active and isn't already
-		   if (shouldActivate && !cursorControlled)
+		   // Only enable action camera if it should be active and isn't already, unless blocked by hold
+		   if (!blockActionCamEnable && shouldActivate && !cursorControlled)
 		   {
 			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
 			   s_WasActive = true;
 		   }
-		   // Never forcibly disable action camera; let the user control disabling
+		// Never forcibly disable action camera; let the user control disabling
 	}
 
 	void GbSelectable(EGameBinds* aTarget, const char* aLabel, EGameBinds aGameBind)
@@ -715,10 +747,15 @@ namespace Addon
 			SaveSettings();
 		}
 
+		ImGui::Separator();
+		if (ImGui::Checkbox("Enable Action Camera Hold Keybind", &Config::ActionCamHoldEnabled))
+		{
+			SaveSettings();
+		}
+
 		ImGui::Text("Redirect Input");
 		if (ImGui::Checkbox("Redirect Left-Click while action cam is active", &Config::RedirectLMB))
 		{
-
 			SaveSettings();
 		}
 		if (Config::RedirectLMB)
@@ -794,6 +831,8 @@ namespace Addon
 
 		Config::RedirectRMB        = settings.value("REDIRECT_RIGHTCLICK",        false        );
 		Config::RedirectRMB_Target = settings.value("REDIRECT_RIGHTCLICK_TARGET", (EGameBinds)0);
+
+		Config::ActionCamHoldEnabled = settings.value("ACTIONCAM_HOLD_ENABLED", false);
 	}
 
 	void SaveSettings()
@@ -814,6 +853,8 @@ namespace Addon
 
 		settings["REDIRECT_RIGHTCLICK"]        = Config::RedirectRMB;
 		settings["REDIRECT_RIGHTCLICK_TARGET"] = Config::RedirectRMB_Target;
+
+		settings["ACTIONCAM_HOLD_ENABLED"]     = Config::ActionCamHoldEnabled;
 
 		try
 		{
