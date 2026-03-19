@@ -176,69 +176,40 @@ namespace Addon
 			return;
 		}
 
-		bool shouldActivate = false;
+		   bool shouldActivate = false;
 
-		if (Config::ResetToCenter && s_CursorWasHidden && !Inputs::IsCursorHidden() && s_NexusLink->IsCameraMoving)
-		{
-			RECT rect{};
-			GetWindowRect(s_WindowHandle, &rect);
-			SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
-		}
+		   if (Config::ResetToCenter && s_CursorWasHidden && !Inputs::IsCursorHidden() && s_NexusLink->IsCameraMoving)
+		   {
+			   RECT rect{};
+			   GetWindowRect(s_WindowHandle, &rect);
+			   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+		   }
 
-		s_CursorWasHidden = Inputs::IsCursorHidden();
+		   s_CursorWasHidden = Inputs::IsCursorHidden();
 
-		if (Config::EnableWhileMoving && s_NexusLink->IsMoving)
-		{
-			shouldActivate = true;
-		}
-		if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
-		{
-			shouldActivate = true;
-		}
-		if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
-		{
-			shouldActivate = true;
-		}
+		   if (Config::EnableWhileMoving && s_NexusLink->IsMoving)
+		   {
+			   shouldActivate = true;
+		   }
+		   if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
+		   {
+			   shouldActivate = true;
+		   }
+		   if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
+		   {
+			   shouldActivate = true;
+		   }
 
-		//                      ui is ticking           && cursor not visible
-		bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
+		   //                      ui is ticking           && cursor not visible
+		   bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
 
-		//  is active        && should be active
-		if (cursorControlled && shouldActivate)
-		{
-			/* nop */
-		}
-		//       not active        && should be active
-		else if (!cursorControlled && shouldActivate)
-		{
-			if (s_WasActive) // must be manual override
-			{
-				/* nop */
-			}
-			else
-			{
-				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
-				s_WasActive = shouldActivate;
-			}
-		}
-		//       is active        && should not be active
-		else if (cursorControlled && !shouldActivate)
-		{
-			if (s_WasActive)
-			{
-				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
-				s_WasActive = shouldActivate;
-			}
-			else
-			{
-				/* not sure if this is reachable */
-			}
-		}
-		//       not active        && should not be active
-		else if (!cursorControlled && !shouldActivate)
-		{
-			/* nop */
-		}
+		   // Only enable action camera if it should be active and isn't already
+		   if (shouldActivate && !cursorControlled)
+		   {
+			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
+			   s_WasActive = true;
+		   }
+		   // Never forcibly disable action camera; let the user control disabling
 	}
 
 	void GbSelectable(EGameBinds* aTarget, const char* aLabel, EGameBinds aGameBind)
