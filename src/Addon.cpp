@@ -86,15 +86,22 @@ namespace Addon
 	{
 		if (!Config::ActionCamHoldEnabled || strcmp(aIdentifier, ACTIONCAM_HOLD_BIND_ID) != 0)
 			return;
-		if (!aIsRelease) {
-			s_ActionCamHoldActive = true;
-			if (Inputs::IsCursorHidden())
-				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
-		} else {
-			s_ActionCamHoldActive = false;
-			if (!Inputs::IsCursorHidden())
-				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
-		}
+		   if (!aIsRelease) {
+			   s_ActionCamHoldActive = true;
+			   if (Inputs::IsCursorHidden())
+				   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+		   } else {
+			   s_ActionCamHoldActive = false;
+			   if (!Inputs::IsCursorHidden()) {
+				   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
+				   // Center the cursor on the window when releasing the keybind, if enabled
+				   if (Config::ResetToCenter && s_WindowHandle) {
+					   RECT rect{};
+					   GetWindowRect(s_WindowHandle, &rect);
+					   SetCursorPos((rect.right + rect.left) / 2, (rect.bottom + rect.top) / 2);
+				   }
+			   }
+		   }
 	}
 
 	void Load(AddonAPI* aApi)
@@ -202,8 +209,8 @@ namespace Addon
 			   return;
 		   }
 
-		   /* Do not evaluate state changes while map is open. */
-		   if (s_MumbleLink->Context.IsMapOpen)
+		   /* Do not evaluate state changes while map or any textbox is open. */
+		   if (s_MumbleLink->Context.IsMapOpen || s_MumbleLink->Context.IsTextboxFocused)
 		   {
 			   return;
 		   }
