@@ -98,7 +98,7 @@ namespace Addon
 				   if (Config::ResetToCenter && s_WindowHandle) {
 					   RECT rect{};
 					   GetWindowRect(s_WindowHandle, &rect);
-					   SetCursorPos((rect.right + rect.left) / 2, (rect.bottom + rect.top) / 2);
+					   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
 				   }
 			   }
 		   }
@@ -245,6 +245,12 @@ namespace Addon
 		   // Only enable action camera if it should be active and isn't already, unless blocked by hold
 		   if (!blockActionCamEnable && shouldActivate && !cursorControlled)
 		   {
+			   // Center the mouse before engaging action cam
+			   if (Config::ResetToCenter && s_WindowHandle) {
+				   RECT rect{};
+				   GetWindowRect(s_WindowHandle, &rect);
+				   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+			   }
 			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
 			   s_WasActive = true;
 		   }
