@@ -80,28 +80,49 @@ namespace Addon
 
 	// Track if the ActionCamHold key is currently held
 	static bool s_ActionCamHoldActive = false;
+	static bool s_ForceReentryDisabled = false;
 	static const char* ACTIONCAM_HOLD_BIND_ID = "ActionCamHold";
+	static const char* FORCE_REENTRY_TOGGLE_BIND_ID = "ForceReentryToggle";
 
 	static void ActionCamHold_KeybindHandler(const char* aIdentifier, bool aIsRelease)
 	{
 		if (!Config::ActionCamHoldEnabled || strcmp(aIdentifier, ACTIONCAM_HOLD_BIND_ID) != 0)
 			return;
-		   if (!aIsRelease) {
-			   s_ActionCamHoldActive = true;
-			   if (Inputs::IsCursorHidden())
-				   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
-		   } else {
-			   s_ActionCamHoldActive = false;
-			   if (!Inputs::IsCursorHidden()) {
-				   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
-				   // Center the cursor on the window when releasing the keybind, if enabled
-				   if (Config::ResetToCenter && s_WindowHandle) {
-					   RECT rect{};
-					   GetWindowRect(s_WindowHandle, &rect);
-					   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
-				   }
-			   }
-		   }
+		if (!aIsRelease) {
+			s_ActionCamHoldActive = true;
+			if (Inputs::IsCursorHidden())
+				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+		} else {
+			s_ActionCamHoldActive = false;
+			if (!Inputs::IsCursorHidden()) {
+				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
+				// Center the cursor on the window when releasing the keybind, if enabled
+				if (Config::ResetToCenter && s_WindowHandle) {
+					RECT rect{};
+					GetWindowRect(s_WindowHandle, &rect);
+					SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+				}
+			}
+		}
+	}
+
+	static void ForceReentryToggle_KeybindHandler(const char* aIdentifier, bool aIsRelease)
+	{
+		if (strcmp(aIdentifier, FORCE_REENTRY_TOGGLE_BIND_ID) != 0)
+			return;
+		if (!aIsRelease) {
+			// On press: toggle the force reentry disabling state
+			s_ForceReentryDisabled = !s_ForceReentryDisabled;
+			if (s_ForceReentryDisabled) {
+				// Release action cam if active
+				if (Inputs::IsCursorHidden())
+					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+			} else {
+				// Reenter/reenable forcing
+				if (!Inputs::IsCursorHidden())
+					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
+			}
+		}
 	}
 
 	void Load(AddonAPI* aApi)
@@ -118,11 +139,20 @@ namespace Addon
 
 		s_APIDefs->WndProc.Register(WndProc);
 
+
 		// Register Action Camera Hold keybind
 		s_APIDefs->InputBinds.Deregister(ACTIONCAM_HOLD_BIND_ID);
 		s_APIDefs->InputBinds.RegisterWithString(
 			ACTIONCAM_HOLD_BIND_ID,
 			(KEYBINDS_PROCESS)ActionCamHold_KeybindHandler,
+			""
+		);
+
+		// Register Force Reentry Toggle keybind
+		s_APIDefs->InputBinds.Deregister(FORCE_REENTRY_TOGGLE_BIND_ID);
+		s_APIDefs->InputBinds.RegisterWithString(
+			FORCE_REENTRY_TOGGLE_BIND_ID,
+			(KEYBINDS_PROCESS)ForceReentryToggle_KeybindHandler,
 			""
 		);
 
@@ -137,6 +167,7 @@ namespace Addon
 	void Unload()
 	{
 		s_APIDefs->InputBinds.Deregister(ACTIONCAM_HOLD_BIND_ID);
+		s_APIDefs->InputBinds.Deregister(FORCE_REENTRY_TOGGLE_BIND_ID);
 		s_APIDefs->WndProc.Deregister(WndProc);
 		s_APIDefs->Renderer.Deregister(PreRender);
 		s_APIDefs->Renderer.Deregister(RenderOptions);
@@ -201,7 +232,7 @@ namespace Addon
 		   static bool s_WasActive = false;
 
 		   // Action Camera Hold: block logic that would turn action cam back on
-		   bool blockActionCamEnable = (Config::ActionCamHoldEnabled && s_ActionCamHoldActive);
+		   bool blockActionCamEnable = (Config::ActionCamHoldEnabled && s_ActionCamHoldActive) || s_ForceReentryDisabled;
 
 		   /* Do not evaluate state changes while not in gameplay. */
 		   if (!s_NexusLink->IsGameplay)
@@ -760,11 +791,15 @@ namespace Addon
 			SaveSettings();
 		}
 
+
 		ImGui::Separator();
 		if (ImGui::Checkbox("Enable Action Camera Hold Keybind", &Config::ActionCamHoldEnabled))
 		{
 			SaveSettings();
 		}
+		ImGui::Text("Keybinds:");
+		ImGui::BulletText("Action Camera Hold: Hold to temporarily release action cam");
+		ImGui::BulletText("Force Reentry Toggle: Toggle to disable/reenable forced reentry");
 
 		ImGui::Text("Redirect Input");
 		if (ImGui::Checkbox("Redirect Left-Click while action cam is active", &Config::RedirectLMB))
