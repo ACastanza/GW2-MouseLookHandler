@@ -91,6 +91,7 @@ namespace Addon
 		if (!aIsRelease) {
 			s_ActionCamHoldActive = true;
 			if (Inputs::IsCursorHidden())
+				s_ForceReentryDisabled = false; // Clear force reentry toggle
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
 		} else {
 			s_ActionCamHoldActive = false;
@@ -117,6 +118,7 @@ namespace Addon
 				// Release action cam if active
 				if (Inputs::IsCursorHidden())
 					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+					s_ForceReentryDisabled = false; // Clear force reentry toggle
 			} else {
 				// Reenter/reenable forcing
 				if (!Inputs::IsCursorHidden())
