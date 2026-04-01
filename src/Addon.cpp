@@ -81,7 +81,7 @@ namespace Addon
 	// Track if the ActionCamHold key is currently held
 	static bool s_ActionCamHoldActive = false;
 	static bool s_ForceReentryDisabled = false;
-	static bool s_WasMoving = false;
+	static bool s_WasMovementKeyHeld = false;
 	static const char* ACTIONCAM_HOLD_BIND_ID = "ActionCamHold";
 	static const char* FORCE_REENTRY_TOGGLE_BIND_ID = "ForceReentryToggle";
 
@@ -115,13 +115,26 @@ namespace Addon
 			// On press: toggle the force reentry disabling state
 			s_ForceReentryDisabled = !s_ForceReentryDisabled;
 			if (s_ForceReentryDisabled) {
-				s_WasMoving = true; // Require a fresh movement press to re-enter
+				s_WasMovementKeyHeld =
+					(GetAsyncKeyState('W') & 0x8000) ||
+					(GetAsyncKeyState('A') & 0x8000) ||
+					(GetAsyncKeyState('S') & 0x8000) ||
+					(GetAsyncKeyState('D') & 0x8000) ||
+					(GetAsyncKeyState(VK_UP) & 0x8000) ||
+					(GetAsyncKeyState(VK_DOWN) & 0x8000) ||
+					(GetAsyncKeyState(VK_LEFT) & 0x8000) ||
+					(GetAsyncKeyState(VK_RIGHT) & 0x8000);
 				// Release action cam if active
 				if (Inputs::IsCursorHidden())
 					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+			} else if (!s_ActionCamHoldActive && !Inputs::IsCursorHidden()) {
+				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
+				if (Config::ResetToCenter && s_WindowHandle) {
+					RECT rect{};
+					GetWindowRect(s_WindowHandle, &rect);
+					SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+				}
 			}
-			// When re-enabling (s_ForceReentryDisabled = false), just clear the block flag.
-			// Let PreRender decide if action cam should enter based on normal conditions.
 		}
 	}
 
@@ -230,6 +243,15 @@ namespace Addon
 	{
 		   static bool s_CursorWasHidden = false;
 		   static bool s_WasActive = false;
+		   bool movementKeyHeld =
+			   (GetAsyncKeyState('W') & 0x8000) ||
+			   (GetAsyncKeyState('A') & 0x8000) ||
+			   (GetAsyncKeyState('S') & 0x8000) ||
+			   (GetAsyncKeyState('D') & 0x8000) ||
+			   (GetAsyncKeyState(VK_UP) & 0x8000) ||
+			   (GetAsyncKeyState(VK_DOWN) & 0x8000) ||
+			   (GetAsyncKeyState(VK_LEFT) & 0x8000) ||
+			   (GetAsyncKeyState(VK_RIGHT) & 0x8000);
 
 		   // Action Camera Hold always blocks auto-enable while held.
 		   bool blockByHold = Config::ActionCamHoldEnabled && s_ActionCamHoldActive;
@@ -237,12 +259,14 @@ namespace Addon
 		   /* Do not evaluate state changes while not in gameplay. */
 		   if (!s_NexusLink->IsGameplay)
 		   {
+			   s_WasMovementKeyHeld = movementKeyHeld;
 			   return;
 		   }
 
 		   /* Do not evaluate state changes while map or any textbox is open. */
 		   if (s_MumbleLink->Context.IsMapOpen || s_MumbleLink->Context.IsTextboxFocused)
 		   {
+			   s_WasMovementKeyHeld = movementKeyHeld;
 			   return;
 		   }
 
@@ -257,8 +281,7 @@ namespace Addon
 
 		s_CursorWasHidden = Inputs::IsCursorHidden();
 
-		bool isMoving = s_NexusLink->IsMoving;
-		bool movementPressedThisFrame = isMoving && !s_WasMoving;
+		bool movementPressedThisFrame = movementKeyHeld && !s_WasMovementKeyHeld;
 		bool reenterByMovement = Config::EnableWhileMoving && movementPressedThisFrame;
 
 		if (reenterByMovement)
@@ -294,7 +317,7 @@ namespace Addon
 			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
 			   s_WasActive = true;
 		   }
-		s_WasMoving = isMoving;
+		s_WasMovementKeyHeld = movementKeyHeld;
 		// Never forcibly disable action camera; let the user control disabling
 	}
 
