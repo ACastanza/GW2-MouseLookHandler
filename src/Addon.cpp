@@ -81,6 +81,7 @@ namespace Addon
 	// Track if the ActionCamHold key is currently held
 	static bool s_ActionCamHoldActive = false;
 	static bool s_ForceReentryDisabled = false;
+	static bool s_WasMoving = false;
 	static const char* ACTIONCAM_HOLD_BIND_ID = "ActionCamHold";
 	static const char* FORCE_REENTRY_TOGGLE_BIND_ID = "ForceReentryToggle";
 
@@ -91,11 +92,10 @@ namespace Addon
 		if (!aIsRelease) {
 			s_ActionCamHoldActive = true;
 			if (Inputs::IsCursorHidden())
-				s_ForceReentryDisabled = false; // Clear force reentry toggle
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
 		} else {
 			s_ActionCamHoldActive = false;
-			if (!Inputs::IsCursorHidden()) {
+			if (!s_ForceReentryDisabled && !Inputs::IsCursorHidden()) {
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
 				// Center the cursor on the window when releasing the keybind, if enabled
 				if (Config::ResetToCenter && s_WindowHandle) {
@@ -115,15 +115,13 @@ namespace Addon
 			// On press: toggle the force reentry disabling state
 			s_ForceReentryDisabled = !s_ForceReentryDisabled;
 			if (s_ForceReentryDisabled) {
+				s_WasMoving = true; // Require a fresh movement press to re-enter
 				// Release action cam if active
 				if (Inputs::IsCursorHidden())
 					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
-					s_ForceReentryDisabled = false; // Clear force reentry toggle
-			} else {
-				// Reenter/reenable forcing
-				if (!Inputs::IsCursorHidden())
-					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
 			}
+			// When re-enabling (s_ForceReentryDisabled = false), just clear the block flag.
+			// Let PreRender decide if action cam should enter based on normal conditions.
 		}
 	}
 
@@ -233,8 +231,8 @@ namespace Addon
 		   static bool s_CursorWasHidden = false;
 		   static bool s_WasActive = false;
 
-		   // Action Camera Hold: block logic that would turn action cam back on
-		   bool blockActionCamEnable = (Config::ActionCamHoldEnabled && s_ActionCamHoldActive) || s_ForceReentryDisabled;
+		   // Action Camera Hold always blocks auto-enable while held.
+		   bool blockByHold = Config::ActionCamHoldEnabled && s_ActionCamHoldActive;
 
 		   /* Do not evaluate state changes while not in gameplay. */
 		   if (!s_NexusLink->IsGameplay)
@@ -259,15 +257,24 @@ namespace Addon
 
 		s_CursorWasHidden = Inputs::IsCursorHidden();
 
-		if (Config::EnableWhileMoving && s_NexusLink->IsMoving)
+		bool isMoving = s_NexusLink->IsMoving;
+		bool movementPressedThisFrame = isMoving && !s_WasMoving;
+		bool reenterByMovement = Config::EnableWhileMoving && movementPressedThisFrame;
+
+		if (reenterByMovement)
+		{
+			s_ForceReentryDisabled = false;
+		}
+
+		if (reenterByMovement)
 		{
 			shouldActivate = true;
 		}
-		if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
+		if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat && (s_ForceReentryDisabled == false))
 		{
 			shouldActivate = true;
 		}
-		if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
+		if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None && (s_ForceReentryDisabled == false))
 		{
 			shouldActivate = true;
 		}
@@ -275,8 +282,8 @@ namespace Addon
 		//                      ui is ticking           && cursor not visible
 		bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
 
-		   // Only enable action camera if it should be active and isn't already, unless blocked by hold
-		   if (!blockActionCamEnable && shouldActivate && !cursorControlled)
+		   // Only enable action camera if it should be active and isn't already.
+		   if (!blockByHold && shouldActivate && !cursorControlled)
 		   {
 			   // Center the mouse before engaging action cam
 			   if (Config::ResetToCenter && s_WindowHandle) {
@@ -287,6 +294,7 @@ namespace Addon
 			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
 			   s_WasActive = true;
 		   }
+		s_WasMoving = isMoving;
 		// Never forcibly disable action camera; let the user control disabling
 	}
 
