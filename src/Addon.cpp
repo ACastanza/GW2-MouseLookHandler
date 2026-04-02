@@ -82,6 +82,9 @@ namespace Addon
 	static bool s_ActionCamHoldActive = false;
 	static bool s_ForceReentryDisabled = false;
 	static bool s_WasMovementKeyHeld = false;
+	// Shadow of cursor-hidden state, updated every frame and optimistically updated by key handlers
+	// to avoid stale reads when InvokeAsync hasn't fired yet between press and release.
+	static bool s_ShadowCursorHidden = false;
 	static const char* ACTIONCAM_HOLD_BIND_ID = "ActionCamHold";
 	static const char* FORCE_REENTRY_TOGGLE_BIND_ID = "ForceReentryToggle";
 
@@ -91,11 +94,14 @@ namespace Addon
 			return;
 		if (!aIsRelease) {
 			s_ActionCamHoldActive = true;
-			if (Inputs::IsCursorHidden())
+			if (s_ShadowCursorHidden) {
+				s_ShadowCursorHidden = false;
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
+			}
 		} else {
 			s_ActionCamHoldActive = false;
-			if (!s_ForceReentryDisabled && !Inputs::IsCursorHidden()) {
+			if (!s_ForceReentryDisabled && !s_ShadowCursorHidden) {
+				s_ShadowCursorHidden = true;
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
 				// Center the cursor on the window when releasing the keybind, if enabled
 				if (Config::ResetToCenter && s_WindowHandle) {
@@ -125,9 +131,12 @@ namespace Addon
 					(GetAsyncKeyState(VK_LEFT) & 0x8000) ||
 					(GetAsyncKeyState(VK_RIGHT) & 0x8000);
 				// Release action cam if active
-				if (Inputs::IsCursorHidden())
+				if (s_ShadowCursorHidden) {
+					s_ShadowCursorHidden = false;
 					s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle off
-			} else if (!s_ActionCamHoldActive && !Inputs::IsCursorHidden()) {
+				}
+			} else if (!s_ActionCamHoldActive && !s_ShadowCursorHidden) {
+				s_ShadowCursorHidden = true;
 				s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0); // Toggle on
 				if (Config::ResetToCenter && s_WindowHandle) {
 					RECT rect{};
@@ -241,45 +250,51 @@ namespace Addon
 
 	void PreRender()
 	{
-		   static bool s_CursorWasHidden = false;
-		   static bool s_WasActive = false;
-		   bool movementKeyHeld =
-			   (GetAsyncKeyState('W') & 0x8000) ||
-			   (GetAsyncKeyState('A') & 0x8000) ||
-			   (GetAsyncKeyState('S') & 0x8000) ||
-			   (GetAsyncKeyState('D') & 0x8000) ||
-			   (GetAsyncKeyState(VK_UP) & 0x8000) ||
-			   (GetAsyncKeyState(VK_DOWN) & 0x8000) ||
-			   (GetAsyncKeyState(VK_LEFT) & 0x8000) ||
-			   (GetAsyncKeyState(VK_RIGHT) & 0x8000);
+		// Sync shadow state from ground truth each frame so key handlers have a fresh baseline.
+		s_ShadowCursorHidden = Inputs::IsCursorHidden();
+		static bool s_CursorWasHidden = false;
 
-		   // Action Camera Hold always blocks auto-enable while held.
-		   bool blockByHold = Config::ActionCamHoldEnabled && s_ActionCamHoldActive;
+		bool movementKeyHeld =
+			(GetAsyncKeyState('W') & 0x8000) ||
+			(GetAsyncKeyState('A') & 0x8000) ||
+			(GetAsyncKeyState('S') & 0x8000) ||
+			(GetAsyncKeyState('D') & 0x8000) ||
+			(GetAsyncKeyState(VK_UP) & 0x8000) ||
+			(GetAsyncKeyState(VK_DOWN) & 0x8000) ||
+			(GetAsyncKeyState(VK_LEFT) & 0x8000) ||
+			(GetAsyncKeyState(VK_RIGHT) & 0x8000);
 
-		   /* Do not evaluate state changes while not in gameplay. */
-		   if (!s_NexusLink->IsGameplay)
-		   {
-			   s_WasMovementKeyHeld = movementKeyHeld;
-			   return;
-		   }
+		// Action Camera Hold always blocks auto-enable while held.
+		bool blockByHold = Config::ActionCamHoldEnabled && s_ActionCamHoldActive;
 
-		   /* Do not evaluate state changes while map or any textbox is open. */
-		   if (s_MumbleLink->Context.IsMapOpen || s_MumbleLink->Context.IsTextboxFocused)
-		   {
-			   s_WasMovementKeyHeld = movementKeyHeld;
-			   return;
-		   }
-
-		bool shouldActivate = false;
-
-		if (Config::ResetToCenter && s_CursorWasHidden && !Inputs::IsCursorHidden() && s_NexusLink->IsCameraMoving)
+		/* Do not evaluate state changes while not in gameplay. */
+		if (!s_NexusLink->IsGameplay)
 		{
-			RECT rect{};
-			GetWindowRect(s_WindowHandle, &rect);
-			SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+			s_WasMovementKeyHeld = movementKeyHeld;
+			return;
 		}
 
-		s_CursorWasHidden = Inputs::IsCursorHidden();
+		/* Do not evaluate state changes while map or any textbox is open. */
+		if (s_MumbleLink->Context.IsMapOpen || s_MumbleLink->Context.IsTextboxFocused)
+		{
+			s_WasMovementKeyHeld = movementKeyHeld;
+			return;
+		}
+
+		bool shouldActivate = false;
+		bool cursorHidden = Inputs::IsCursorHidden();
+
+		if (Config::ResetToCenter && s_CursorWasHidden && !cursorHidden && s_NexusLink->IsCameraMoving)
+		{
+			if (s_WindowHandle)
+			{
+				RECT rect{};
+				GetWindowRect(s_WindowHandle, &rect);
+				SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+			}
+		}
+
+		s_CursorWasHidden = cursorHidden;
 
 		bool movementPressedThisFrame = movementKeyHeld && !s_WasMovementKeyHeld;
 		bool reenterByMovement = Config::EnableWhileMoving && movementPressedThisFrame;
@@ -289,34 +304,34 @@ namespace Addon
 			s_ForceReentryDisabled = false;
 		}
 
-		if (reenterByMovement)
+		shouldActivate = reenterByMovement;
+
+		if (!s_ForceReentryDisabled && Config::EnableInCombat && s_MumbleLink->Context.IsInCombat)
 		{
 			shouldActivate = true;
 		}
-		if (Config::EnableInCombat && s_MumbleLink->Context.IsInCombat && (s_ForceReentryDisabled == false))
-		{
-			shouldActivate = true;
-		}
-		if (Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None && (s_ForceReentryDisabled == false))
+		if (!s_ForceReentryDisabled && Config::EnableOnMount && s_MumbleLink->Context.MountIndex != Mumble::EMountIndex::None)
 		{
 			shouldActivate = true;
 		}
 
 		//                      ui is ticking           && cursor not visible
-		bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
+		bool cursorControlled = s_NexusLink->IsGameplay && cursorHidden;
 
-		   // Only enable action camera if it should be active and isn't already.
-		   if (!blockByHold && shouldActivate && !cursorControlled)
-		   {
-			   // Center the mouse before engaging action cam
-			   if (Config::ResetToCenter && s_WindowHandle) {
-				   RECT rect{};
-				   GetWindowRect(s_WindowHandle, &rect);
-				   SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
-			   }
-			   s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
-			   s_WasActive = true;
-		   }
+		// Only enable action camera if it should be active and isn't already.
+		if (!blockByHold && shouldActivate && !cursorControlled)
+		{
+			// Center the mouse before engaging action cam.
+			if (Config::ResetToCenter && s_WindowHandle)
+			{
+				RECT rect{};
+				GetWindowRect(s_WindowHandle, &rect);
+				SetCursorPos((rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2);
+			}
+
+			s_APIDefs->GameBinds.InvokeAsync(EGameBinds_CameraActionMode, 0);
+			s_ShadowCursorHidden = true;
+		}
 		s_WasMovementKeyHeld = movementKeyHeld;
 		// Never forcibly disable action camera; let the user control disabling
 	}
@@ -859,14 +874,15 @@ namespace Addon
 
 	void LoadSettings()
 	{
-		std::filesystem::path path = s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME"/settings.json");
+		const std::filesystem::path addonPath = s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME);
+		const std::filesystem::path settingsPath = s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME"/settings.json");
 
-		if (!std::filesystem::exists(s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME)))
+		if (!std::filesystem::exists(addonPath))
 		{
-			std::filesystem::create_directory(s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME));
+			std::filesystem::create_directories(addonPath);
 		}
 
-		if (!std::filesystem::exists(s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME"/settings.json")))
+		if (!std::filesystem::exists(settingsPath))
 		{
 			return;
 		}
@@ -875,11 +891,10 @@ namespace Addon
 
 		try
 		{
-			std::ifstream file(path);
+			std::ifstream file(settingsPath);
 			settings = json::parse(file);
-			file.close();
 		}
-		catch (json::parse_error& ex)
+		catch (const json::parse_error& ex)
 		{
 			s_APIDefs->Log(ELogLevel_WARNING, ADDON_NAME, String::Format("Settings.json could not be parsed. Error: %s", ex.what()).c_str());
 		}
@@ -918,7 +933,7 @@ namespace Addon
 
 	void SaveSettings()
 	{
-		std::filesystem::path path = s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME "/settings.json");
+		const std::filesystem::path path = s_APIDefs->Paths.GetAddonDirectory(ADDON_NAME "/settings.json");
 
 		json settings = json::object();
 
@@ -940,8 +955,7 @@ namespace Addon
 		try
 		{
 			std::ofstream file(path);
-			file << settings.dump(1, '\t') << std::endl;
-			file.close();
+			file << settings.dump(1, '\t') << '\n';
 		}
 		catch (...)
 		{
