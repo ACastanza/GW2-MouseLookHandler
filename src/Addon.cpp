@@ -82,6 +82,10 @@ namespace Addon
 	static bool s_ActionCamHoldActive = false;
 	static bool s_ForceReentryDisabled = false;
 	static bool s_WasMovementKeyHeld = false;
+	static bool s_RedirectLMBActive = false;
+	static EGameBinds s_RedirectLMBActiveTarget = (EGameBinds)0;
+	static bool s_RedirectRMBActive = false;
+	static EGameBinds s_RedirectRMBActiveTarget = (EGameBinds)0;
 	// Shadow of cursor-hidden state, updated every frame and optimistically updated by key handlers
 	// to avoid stale reads when InvokeAsync hasn't fired yet between press and release.
 	static bool s_ShadowCursorHidden = false;
@@ -188,6 +192,20 @@ namespace Addon
 
 	void Unload()
 	{
+		if (s_RedirectLMBActive && s_RedirectLMBActiveTarget != (EGameBinds)0)
+		{
+			s_APIDefs->GameBinds.Release(s_RedirectLMBActiveTarget);
+			s_RedirectLMBActive = false;
+			s_RedirectLMBActiveTarget = (EGameBinds)0;
+		}
+
+		if (s_RedirectRMBActive && s_RedirectRMBActiveTarget != (EGameBinds)0)
+		{
+			s_APIDefs->GameBinds.Release(s_RedirectRMBActiveTarget);
+			s_RedirectRMBActive = false;
+			s_RedirectRMBActiveTarget = (EGameBinds)0;
+		}
+
 		s_APIDefs->InputBinds.Deregister(ACTIONCAM_HOLD_BIND_ID);
 		s_APIDefs->InputBinds.Deregister(FORCE_REENTRY_TOGGLE_BIND_ID);
 		s_APIDefs->WndProc.Deregister(WndProc);
@@ -197,6 +215,32 @@ namespace Addon
 
 	UINT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	{
+		if (uMsg == WM_LBUTTONUP && s_RedirectLMBActive)
+		{
+			if (s_RedirectLMBActiveTarget != (EGameBinds)0)
+			{
+				s_APIDefs->GameBinds.Release(s_RedirectLMBActiveTarget);
+			}
+			s_RedirectLMBActive = false;
+			s_RedirectLMBActiveTarget = (EGameBinds)0;
+
+			/* Releases should always be passed on. */
+			return 1;
+		}
+
+		if (uMsg == WM_RBUTTONUP && s_RedirectRMBActive)
+		{
+			if (s_RedirectRMBActiveTarget != (EGameBinds)0)
+			{
+				s_APIDefs->GameBinds.Release(s_RedirectRMBActiveTarget);
+			}
+			s_RedirectRMBActive = false;
+			s_RedirectRMBActiveTarget = (EGameBinds)0;
+
+			/* Releases should always be passed on. */
+			return 1;
+		}
+
 		//                      ui is ticking           && cursor not visible
 		bool cursorControlled = s_NexusLink->IsGameplay && Inputs::IsCursorHidden();
 
@@ -212,12 +256,25 @@ namespace Addon
 				case WM_LBUTTONDBLCLK:
 				case WM_LBUTTONDOWN:
 				{
-					s_APIDefs->GameBinds.Press(Config::RedirectLMB_Target);
+					if (!s_RedirectLMBActive && Config::RedirectLMB_Target != (EGameBinds)0)
+					{
+						s_RedirectLMBActiveTarget = Config::RedirectLMB_Target;
+						s_APIDefs->GameBinds.Press(s_RedirectLMBActiveTarget);
+						s_RedirectLMBActive = true;
+					}
 					return 0;
 				}
 				case WM_LBUTTONUP:
 				{
-					s_APIDefs->GameBinds.Release(Config::RedirectLMB_Target);
+					if (s_RedirectLMBActive)
+					{
+						if (s_RedirectLMBActiveTarget != (EGameBinds)0)
+						{
+							s_APIDefs->GameBinds.Release(s_RedirectLMBActiveTarget);
+						}
+						s_RedirectLMBActive = false;
+						s_RedirectLMBActiveTarget = (EGameBinds)0;
+					}
 
 					/* Releases should always be passed on. */
 					return 1;
@@ -232,12 +289,25 @@ namespace Addon
 				case WM_RBUTTONDBLCLK:
 				case WM_RBUTTONDOWN:
 				{
-					s_APIDefs->GameBinds.Press(Config::RedirectRMB_Target);
+					if (!s_RedirectRMBActive && Config::RedirectRMB_Target != (EGameBinds)0)
+					{
+						s_RedirectRMBActiveTarget = Config::RedirectRMB_Target;
+						s_APIDefs->GameBinds.Press(s_RedirectRMBActiveTarget);
+						s_RedirectRMBActive = true;
+					}
 					return 0;
 				}
 				case WM_RBUTTONUP:
 				{
-					s_APIDefs->GameBinds.Release(Config::RedirectRMB_Target);
+					if (s_RedirectRMBActive)
+					{
+						if (s_RedirectRMBActiveTarget != (EGameBinds)0)
+						{
+							s_APIDefs->GameBinds.Release(s_RedirectRMBActiveTarget);
+						}
+						s_RedirectRMBActive = false;
+						s_RedirectRMBActiveTarget = (EGameBinds)0;
+					}
 
 					/* Releases should always be passed on. */
 					return 1;
@@ -317,6 +387,26 @@ namespace Addon
 
 		//                      ui is ticking           && cursor not visible
 		bool cursorControlled = s_NexusLink->IsGameplay && cursorHidden;
+
+		if ((!Config::RedirectLMB || !cursorControlled) && s_RedirectLMBActive)
+		{
+			if (s_RedirectLMBActiveTarget != (EGameBinds)0)
+			{
+				s_APIDefs->GameBinds.Release(s_RedirectLMBActiveTarget);
+			}
+			s_RedirectLMBActive = false;
+			s_RedirectLMBActiveTarget = (EGameBinds)0;
+		}
+
+		if ((!Config::RedirectRMB || !cursorControlled) && s_RedirectRMBActive)
+		{
+			if (s_RedirectRMBActiveTarget != (EGameBinds)0)
+			{
+				s_APIDefs->GameBinds.Release(s_RedirectRMBActiveTarget);
+			}
+			s_RedirectRMBActive = false;
+			s_RedirectRMBActiveTarget = (EGameBinds)0;
+		}
 
 		// Only enable action camera if it should be active and isn't already.
 		if (!blockByHold && shouldActivate && !cursorControlled)
